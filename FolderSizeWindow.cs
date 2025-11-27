@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using Sirenix.OdinInspector;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEngine;
@@ -11,6 +12,12 @@ using Object = UnityEngine.Object;
 
 namespace Plugins.Editor
 {
+	public enum Source
+	{
+		ProjectWindow,
+		Selection,
+	}
+
 	public enum Sorting
 	{
 		Alphabetical,
@@ -19,14 +26,17 @@ namespace Plugins.Editor
 
 	public sealed class FolderSizeWindow : EditorWindow, IHasCustomMenu
 	{
-		private static MethodInfo _tryGetActiveFolderPath = typeof(ProjectWindowUtil).GetMethod("TryGetActiveFolderPath", BindingFlags.Static | BindingFlags.NonPublic);
+		private static MethodInfo _tryGetActiveFolderPath =
+			typeof(ProjectWindowUtil).GetMethod("TryGetActiveFolderPath", BindingFlags.Static | BindingFlags.NonPublic);
 		private static HashSet<Type> _excluded = new()
 		{
 			typeof(SceneAsset),
+
 			//typeof(DefaultAsset),
 		};
 		private List<Drawer> _drawers = new();
 		private string _lastPath;
+		private Source _source;
 		private Sorting _sorting;
 		private Vector2 _scroll;
 		private int _maxloadCount;
@@ -44,18 +54,41 @@ namespace Plugins.Editor
 			titleContent = new GUIContent("Folder Size");
 			EditorApplication.projectWindowItemOnGUI -= OnDrawItem;
 			EditorApplication.projectWindowItemOnGUI += OnDrawItem;
+			Selection.selectionChanged -= CollectSelection;
+			Selection.selectionChanged += CollectSelection;
 		}
 
-		private void OnDisable() => EditorApplication.projectWindowItemOnGUI -= OnDrawItem;
+		private void OnDisable()
+		{
+			Selection.selectionChanged -= CollectSelection;
+			EditorApplication.projectWindowItemOnGUI -= OnDrawItem;
+		}
+
 		public void Update() => Repaint();
 
 		private void OnGUI()
 		{
-			TryGetActiveFolderPath(out string path);
-			if (_lastPath != path)
+			switch (_source)
 			{
-				_lastPath = path;
-				_drawers.Clear();
+				case Source.ProjectWindow:
+				{
+					TryGetActiveFolderPath(out string path);
+					if (_lastPath != path)
+					{
+						_lastPath = path;
+						_drawers.Clear();
+					}
+
+					break;
+				}
+
+				case Source.Selection:
+				{
+					break;
+				}
+
+				default:
+					throw new ArgumentOutOfRangeException();
 			}
 
 			EditorGUILayout.Space();
@@ -63,46 +96,90 @@ namespace Plugins.Editor
 			{
 				Application.OpenURL("https://docs.unity3d.com/ScriptReference/Profiling.Profiler.GetRuntimeMemorySizeLong.html");
 			}
+
+			if (EditorGUILayout.LinkButton("Can't consider vertex compression (Build-time)"))
+			{
+				Application.OpenURL("https://docs.unity3d.com/Manual/mesh-compression.html#vertex-compression");
+			}
+
 			EditorGUILayout.Space();
+			_source = (Source)EditorGUILayout.EnumPopup(_source);
 			_sorting = (Sorting)EditorGUILayout.EnumPopup(_sorting);
 			EditorGUILayout.Space();
+
+			if (GUILayout.Button(EditorGUIUtility.IconContent("d_preAudioLoopOff")))
+			{
+				_lastPath = null;
+				_drawers.Clear();
+				CollectSelection();
+			}
+
 			switch (_sorting)
 			{
 				case Sorting.Alphabetical:
-					{
-						_drawers.Sort((d1, d2) => d2.Name.CompareTo(d1.Name));
-						break;
-					}
+				{
+					_drawers.Sort((d1, d2) => d2.Name.CompareTo(d1.Name));
+					break;
+				}
+
 				case Sorting.Size:
+				{
+					_drawers.Sort((d1, d2) =>
 					{
-						_drawers.Sort((d1, d2) =>
-						{
-							int result = d1.Size.CompareTo(d2.Size);
-							if (result != 0) return result;
-							return d1.Guid.CompareTo(d2.Guid);
-						});
-						break;
-					}
+						int result = d1.Size.CompareTo(d2.Size);
+						if (result != 0) return result;
+
+						return d1.Guid.CompareTo(d2.Guid);
+					});
+
+					break;
+				}
+
 				default: throw new ArgumentOutOfRangeException();
 			}
 
 			_scroll = EditorGUILayout.BeginScrollView(_scroll);
+			long totalSize = 0;
 			for (int i = _drawers.Count - 1; i >= 0; i--)
 			{
 				Drawer drawer = _drawers[i];
 				drawer.OnGUI();
+				totalSize += drawer.Size;
 			}
+
+			GUILayout.BeginHorizontal();
+			GUILayout.FlexibleSpace();
+			GUILayout.Label($"Total: {SizeText.ByteLongToString(totalSize)}");
+			GUILayout.EndHorizontal();
+
 			EditorGUILayout.EndScrollView();
+		}
+
+		private void CollectSelection()
+		{
+			if (_source != Source.Selection) return;
+
+			_drawers.Clear();
+			foreach (Object target in Selection.objects)
+			{
+				if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(target, out string guid, out long id))
+				{
+					_drawers.Add(new Drawer(this, guid, AssetDatabase.GetAssetPath(target)));
+				}
+			}
 		}
 
 		private void OnDrawItem(string guid, Rect selectionRect)
 		{
+			if (_source != Source.ProjectWindow) return;
+
 			string path = AssetDatabase.GUIDToAssetPath(guid);
 			if (!path.Contains(_lastPath)) return;
 			if (path == _lastPath) return;
 
 			var drawer = _drawers.Find(d => d.Guid == guid);
 			if (drawer != null) return;
+
 			drawer = new Drawer(this, guid, path);
 			_drawers.Add(drawer);
 		}
@@ -117,7 +194,27 @@ namespace Plugins.Editor
 		}
 
 		void IHasCustomMenu.AddItemsToMenu(GenericMenu menu) => menu.AddItem(new GUIContent("Edit Script"), true, OpenScript);
+
 		private void OpenScript() => AssetDatabase.OpenAsset(MonoScript.FromScriptableObject(this));
+
+		[OnInspectorGUI]
+		private void OnInspectorGUI()
+		{
+			bool needAnimation = false;
+			foreach (Drawer drawer in _drawers)
+			{
+				if (drawer.IsProcessing)
+				{
+					needAnimation = true;
+					break;
+				}
+			}
+
+			if (needAnimation)
+			{
+				GUILayout.Label("Processing in progress...");
+			}
+		}
 
 		public sealed class Drawer : IDisposable
 		{
@@ -128,6 +225,9 @@ namespace Plugins.Editor
 			public long Size { get; private set; }
 			private string _path;
 			private FolderSizeWindow _window;
+			public bool IsProcessing => _coroutine != null;
+			private int _progress;
+			private int _count;
 
 			public Drawer(FolderSizeWindow window, string guid, string path)
 			{
@@ -142,10 +242,19 @@ namespace Plugins.Editor
 			public void OnGUI()
 			{
 				GUILayout.BeginHorizontal();
+
 				//EditorGUILayout.ObjectField(Asset, typeof(Object), false);
 				//GUILayout.FlexibleSpace();
 				EditorGUILayout.SelectableLabel(Name, GUILayout.Height(15));
 				EditorGUILayout.SelectableLabel(SizeText.ByteLongToString(Size), GUILayout.Width(80), GUILayout.Height(15));
+
+				if (IsProcessing)
+				{
+					UnityEngine.GUI.enabled = false;
+					EditorGUILayout.Slider(_progress, 0, _count);
+					UnityEngine.GUI.enabled = true;
+				}
+
 				GUILayout.EndHorizontal();
 			}
 
@@ -154,10 +263,14 @@ namespace Plugins.Editor
 				if (Asset is DefaultAsset folder)
 				{
 					string[] guids = AssetDatabase.FindAssets("", new[] { _path });
+					_count = guids.Length;
+					_progress = 0;
 					foreach (string guid in guids)
 					{
 						string path = AssetDatabase.GUIDToAssetPath(guid);
+						_progress++;
 						if (string.IsNullOrEmpty(path)) continue;
+
 						AddAllAssetsRecursive(path);
 						yield return null;
 					}
@@ -167,6 +280,9 @@ namespace Plugins.Editor
 					if (Asset && !_excluded.Contains(Asset.GetType()))
 						AddAllAssetsRecursive(_path);
 				}
+
+				EditorCoroutineUtility.StopCoroutine(_coroutine);
+				_coroutine = null;
 			}
 
 			private void AddAllAssetsRecursive(string path)
@@ -179,6 +295,7 @@ namespace Plugins.Editor
 				{
 					return;
 				}
+
 				Object[] assets = null;
 
 				try
@@ -197,6 +314,7 @@ namespace Plugins.Editor
 						Size += Profiler.GetRuntimeMemorySizeLong(subAsset);
 					}
 				}
+
 				_window.Repaint();
 			}
 
