@@ -1,0 +1,30 @@
+{
+  "name": "com.mitaywalle.folder-size-window",
+  "version": "1.0.0",
+  "displayName": "Folder Size Window",
+  "description": "Unity Editor window that displays the runtime memory size of folders and selected assets in the Project window.",
+  "unity": "2021.3",
+  "type": "tool",
+  "keywords": [
+    "editor",
+    "analysis",
+    "memory",
+    "folder"
+  ],
+  "homepage": "https://github.com/mitay-walle/com.mitaywalle.folder-size-window",
+  "documentationUrl": "https://github.com/mitay-walle/com.mitaywalle.folder-size-window#readme",
+  "licensesUrl": "https://github.com/mitay-walle/com.mitaywalle.folder-size-window/blob/main/LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mitay-walle/com.mitaywalle.folder-size-window.git"
+  },
+  "author": {
+    "name": "Dmitry",
+    "email": "mitay-walle91@mail.ru",
+    "url": "https://github.com/mitay-walle"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "com.unity.editorcoroutines": "1.0.1"
+  }
+}

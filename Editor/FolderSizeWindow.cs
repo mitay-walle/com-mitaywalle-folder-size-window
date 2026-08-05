@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-using Sirenix.OdinInspector;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEngine;
@@ -196,25 +195,6 @@ namespace Plugins.Editor
 		void IHasCustomMenu.AddItemsToMenu(GenericMenu menu) => menu.AddItem(new GUIContent("Edit Script"), true, OpenScript);
 
 		private void OpenScript() => AssetDatabase.OpenAsset(MonoScript.FromScriptableObject(this));
-
-		[OnInspectorGUI]
-		private void OnInspectorGUI()
-		{
-			bool needAnimation = false;
-			foreach (Drawer drawer in _drawers)
-			{
-				if (drawer.IsProcessing)
-				{
-					needAnimation = true;
-					break;
-				}
-			}
-
-			if (needAnimation)
-			{
-				GUILayout.Label("Processing in progress...");
-			}
-		}
 
 		public sealed class Drawer : IDisposable
 		{
